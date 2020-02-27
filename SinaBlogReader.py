@@ -31,9 +31,9 @@ def change_file_ext(filename, extname=""):
     return uouttxt
 
 
-def create_dir(path):
+def ensure_dir(path):
     """
-    创建目录,如果存在则忽略
+    确保目录存在,如果存在则忽略,没有则新建
     :param path:
     :return:
     """
@@ -110,21 +110,35 @@ def get_page(url, replace_dict=None):
     HTML = replace_str(HTML.decode('utf-8'), replace_dict)
     with open(os.path.join(dir_html, filename), "w", encoding="utf-8") as f:
         global count_blog_downloaded
-        print_progress_bar(count_blog_downloaded / count_blog * 100, "处理博客")
+        print_progress_bar(count_blog_downloaded / count_blog * 100, "处理博客",
+                           str(count_blog_downloaded) + "/" + str(count_blog) + "个")
         count_blog_downloaded += 1
         f.write(HTML)
 
 
 # 程序开始
+# 首页的替换字典
+replace_dict_index = {
+    "http://blog.sina.com.cn/s/": "html/"
+}
+
+# 列表页和详情页的替换字典
+replace_dict = {
+    "http://blog.sina.com.cn/s/": ""
+}
+
+map_articlelist = {}  # 分类的文章列表
+count_page = 1  # 博客页面数量
+count_blog_downloaded = 0  # 已下载的页面
 root_path = os.path.abspath(os.path.dirname(__file__))  # 系统所在路径
 file_conf = change_file_ext(sys.argv[0], ".cnf")  # 配置文件的路径
 
 # 找不到配置文件的时候创建配置文件
 if not os.path.exists(file_conf):
     with open(file_conf, "wb") as json_file:
-        cnf_data = {"blog_ID": ""}  # 初始化配置文件信息
+        cnf_data = {"blog_ID": ""}  # 默认配置文件信息
         json.dump(cnf_data, json_file, ensure_ascii=False)
-    raise ValueError("请在当前目录下的 cnf 文件中填写所需的配置")
+    raise ValueError("请在当前目录下的 cnf 文件中填写所需的新浪用户 ID")
 
 # 读取配置文件
 with open(file_conf, "r") as json_file:
@@ -138,58 +152,41 @@ if blog_ID.strip() == "":
 # 数据存储路径
 dir_data = os.path.join(root_path, "data")  # 默认数据文件目录
 dir_user_ID = os.path.join(dir_data, blog_ID)  # 指定用户ID的数据目录
-dir_meta = os.path.join(dir_user_ID, "meta")  # 元数据目录
 dir_html = os.path.join(dir_user_ID, "html")  # 元数据目录
-# 检查目录是否存在,不存在就新建
-create_dir(dir_data)
-create_dir(dir_user_ID)
-create_dir(dir_meta)
-create_dir(dir_html)
+ensure_dir(dir_data)  # 确保目录存在
+ensure_dir(dir_user_ID)
+ensure_dir(dir_html)
 
-# 首页的替换字典
-replace_dict_index = {
-    "http://blog.sina.com.cn/s/": "html/"
-}
+blog_index_URL = "http://blog.sina.com.cn/s/articlelist_" + blog_ID + "_0_1.html"
+page_index = urlopen(blog_index_URL).read()  # 读取博客目录
+menu = PyQuery(page_index)("div.menuList").html()
+menu_links = PyQuery(menu)("a")
 
-# 列表页和详情页的替换字典
-replace_dict = {
-    "http://blog.sina.com.cn/s/": ""
-}
-
-sina_blog_URL = "http://blog.sina.com.cn/s/articlelist_" + blog_ID + "_0_1.html"
-page_categorys = urlopen(sina_blog_URL).read()  # 读取博客目录
-HTML_categorys = PyQuery(page_categorys)("div.menuList").html()
-HTML_categorys = PyQuery(HTML_categorys)("a")
+# 记录分类
 map_category = {}
-for li in HTML_categorys.items():
+for li in menu_links.items():
     text = li.text()
-    if text != u"\u535a\u6587\u6536\u85cf":  # 忽略博文收藏目录
+    if text != "博文收藏":  # 忽略博文收藏目录
         map_category[text] = li.attr("href")
 len_map_category = len(map_category)
-HTML_paging = PyQuery(page_categorys)("ul.SG_pages").html()
 
-# 分析页数
-count_page = 1
-if HTML_paging.strip() != "":
-    count_page = int(PyQuery(HTML_paging)("span").text().replace(u"共", "").replace(u"页", ""))
-
-# 保存首页
-HTML = replace_str(page_categorys.decode('utf-8'), replace_dict=replace_dict_index)
+# 保存首页 HTML
+HTML = replace_str(page_index.decode('utf-8'), replace_dict=replace_dict_index)
 with open(os.path.join(dir_user_ID, "index.html"), "w", encoding="utf-8") as f:
     f.write(HTML)
 
 # 分析记录数
-HTML_paging = PyQuery(page_categorys)("div.SG_colW73").html()
+paging = PyQuery(page_index)("ul.SG_pages").html()
+if paging.strip() != "":
+    count_page = int(PyQuery(paging)("span").text().replace(u"共", "").replace(u"页", ""))
+HTML_paging = PyQuery(page_index)("div.SG_colW73").html()
 HTML_paging = PyQuery(HTML_paging)("div.SG_connHead").html()
 HTML_paging = PyQuery(HTML_paging)("span.title").html()
 count_blog = int(PyQuery(HTML_paging)("em").text().replace(u"(", "").replace(u")", ""))
-count_blog_downloaded = 0  # 已下载的页面
-map_articlelist = {}  # 分类的文章列表
-count = 0
-print("一共", len_map_category, "个分类,博客总数：", count_blog)
+
+print("该博客一共", len_map_category, "个分类,博文总数：", count_blog)
 
 # 遍历每个分类
-index_category = 0
 for category_name in map_category.keys():
     category_URL = map_category[category_name]
     page_articlelist = urlopen(category_URL).read()  # 读取该分类下的博文列表
@@ -204,4 +201,3 @@ for category_name in map_category.keys():
     while count_page < count_page_category:
         get_articlelist(category_URL, replace_dict=replace_dict)
         count_page += 1
-    index_category += 1
